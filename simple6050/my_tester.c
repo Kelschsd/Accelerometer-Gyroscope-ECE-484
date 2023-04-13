@@ -9,6 +9,7 @@ void setup(void) {
 }
 
 int main() {
+	setup();
 	while(1){
 		/* Get new sensor events with the readings */
 		//simple6050_read();

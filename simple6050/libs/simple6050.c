@@ -32,19 +32,18 @@
 #include <avr/io.h>
 #include "uart.c"
 
-const int MPU = 0x68;  // I2C address for MPU6050
-float acc_x, acc_y, acc_z;                                          // Acceleration values in g's in each dimention
-float gyro_x, gyro_y, gyro_z;                                       // Acceleration values in g's on each axis
-uint8_t sen_acc, sen_gyro, cutoff;
-uint8_t data_in[6];
-float lsb_sen_acc, lsb_sen_gyro;
-float accAngleX, accAngleY;
-float gyroAngleX, gyroAngleY, gyroAngleZ;                           // Current angle of each axis
-float roll, pitch;                                                  // roll is over x-axis, pitch is over y-axis
-float elapsedTime, currentTime, previousTime;
-time_t timer;
-float acc_x_S;
-char buf[10];		// Used to print out values					
+const uint8_t MPU = 0x68; 								// I2C address for MPU6050
+float acc_x, acc_y, acc_z;                              // acceleration values in g's in each dimention
+float gyro_x, gyro_y, gyro_z;          					// acceleration values in g's on each axis
+uint8_t sen_acc, sen_gyro, cutoff;						// value to be written to MPU6050 to change settings
+uint8_t data_in[14];									// array for storing I2C data from sensor
+float lsb_sen_acc, lsb_sen_gyro;						// sensitivity settings for acceration and rotation
+float accAngleX, accAngleY;								// acceleration of rotation over x and y axis
+float gyroAngleX, gyroAngleY, gyroAngleZ;               // Current angle of each axis
+float roll, pitch;                                      // roll is over x-axis, pitch is over y-axis
+float elapsedTime, currentTime, previousTime;			// used for convrting from acceration to absolute rotation angles
+time_t timer;											// creates timer
+char buf[10];											// used to print out values
 
 /*
 *	ChatGPT Generated
@@ -61,6 +60,24 @@ char *ftoa(float f, char *buf, int precision) {
     return buf;
 }
 
+uint8_t i2c_read_byte(uint8_t address)
+{
+    // start I2C communication and check for errors
+    if (i2c_master_start(address, TW_READ) != I2C_STATUS_SUCCESS)
+    {
+        // handle error
+        return 0xFF; // return a default value to indicate an error
+    }
+
+    // read a single byte of data and send NACK to stop communication
+    uint8_t data = i2c_master_readNack();
+
+    // end I2C communication
+    i2c_master_stop();
+
+    return data;
+}
+
 
 /*
 * Sets initial values of parameters for 6050
@@ -68,16 +85,19 @@ char *ftoa(float f, char *buf, int precision) {
 */
 void simple6050_setup()
 {
-	uart_init(9600); // bps
-	cli_reset();
-	printf("\n");
-	printf("Initializing 6050 \n");
-
   /*
+  * Function for initializing setting bits on the MPU6050
+  * Available options are commented out. Uncomment desired 
+  * line and comment default to change if needed.
   * Modified from (2)
   */
   i2c_master_init(I2C_SCL_FREQUENCY_400);       // Initialize comunication block
-  i2c_master_sendByte(0x6B, 0x00);
+  i2c_master_sendByte(MPU, 0x6B);				
+  i2c_master_sendByte(MPU, 0x10);				// Resets PWR_MGMT_1 Register
+  
+  
+  uart_init(9600); // bps
+  cli_reset();
   
   // Configure Accelerometer Sensitivity - Full Scale Range (default +/- 2g)
   // Make range smaller for more sensitive readings
@@ -87,7 +107,8 @@ void simple6050_setup()
   //sen_acc = 0x10;                  //Set the register bits as 00010000 (+/- 8g full scale range)
   //sen_acc = 0x18;                  //Set the register bits as 00011000 (+/- 16g full scale range)
   /* ========================================*/
-  i2c_master_sendByte(0x1C, sen_acc);	//Talk to the ACCEL_CONFIG register (1C hex)
+  i2c_master_sendByte(MPU, 0x1C);
+  i2c_master_sendByte(MPU, sen_acc);	//Talk to the ACCEL_CONFIG register (1C hex)
 
   // Configure Gyro Sensitivity - Full Scale Range (default +/- 250deg/s)
   // Make smaller range for more sensitive readings
@@ -97,7 +118,8 @@ void simple6050_setup()
   //sen_gyro = 0x10;                   // Set the register bits as 00010000 (1000deg/s full scale)
   //sen_gyro = 0x18;                   // Set the register bits as 00011000 (2000deg/s full scale)
   /* ========================================*/
-   i2c_master_sendByte(0x1B, sen_gyro);		// Talk to the GYRO_CONFIG register (1B hex)
+   i2c_master_sendByte(MPU, 0x1B);
+   i2c_master_sendByte(MPU, sen_gyro);		// Talk to the GYRO_CONFIG register (1B hex)
 
   /*
   * Configure Digital Low Pass Filter
@@ -114,7 +136,8 @@ void simple6050_setup()
   //cutoff = (0x05);                     // Set the register to 5 (cutoff =  10 Hz / 1 kHz )
   //cutoff = (0x06);                     // Set the register to 6 (cutoff =   5 Hz / 1 kHz ) - Strong Filter
    /* =======================================*/
-   i2c_master_sendByte(0x1A, cutoff);		// Talk to the DLPF_CFG register
+   i2c_master_sendByte(MPU, 0x1A);
+   i2c_master_sendByte(MPU, cutoff);		// Talk to the DLPF_CFG register
    
 
   /*
@@ -166,18 +189,23 @@ void simple6050_setup()
 */
 void simple6050_read()
 {
+	
+	
+	i2c_master_sendByte(MPU, 0x3B);
 	i2c_master_receive(MPU, &data_in[0], 1);
+	i2c_master_sendByte(MPU, 0x3C);
 	i2c_master_receive(MPU, &data_in[1], 1);
-	i2c_master_receive(MPU, &data_in[2], 1);
+	//i2c_master_receive(MPU, &data_in, 2);
+	//i2c_master_receive(MPU, &data_in, 2);
 	// Code blocks modified from (2)
 	// Must divide by sensitivity values
-	acc_x = data_in[0] / lsb_sen_acc; // X-axis value
+	acc_x = ((data_in[0] << 8 ) | data_in[1] )/ lsb_sen_acc; // X-axis value
 	acc_y = data_in[1] / lsb_sen_acc; // Y-axis value
 	acc_z = data_in[2] / lsb_sen_acc; // Z-axis value
 
-	i2c_master_receive(MPU, &data_in[4], 1);
-	i2c_master_receive(MPU, &data_in[5], 1);
-	i2c_master_receive(MPU, &data_in[6], 1);
+	//i2c_master_receive(MPU, &data_in[4], 2);
+	//i2c_master_receive(MPU, &data_in[5], 2);
+	//i2c_master_receive(MPU, &data_in[6], 2);
 	gyro_x = data_in[4] / lsb_sen_gyro;
 	gyro_y = data_in[5] / lsb_sen_gyro;
 	gyro_z = data_in[6] / lsb_sen_gyro;
@@ -207,18 +235,30 @@ void simple6050_read()
 	// Yaw is not accurate with this method, additional hardware would be needed
 }
 
+
 /*
 * A simple test loop that prints the readings to the serial
 * monitor. Values can also be viewed in the serial plotter.
 */
 void simple6050_test()
 {
-	uart_init(9600); // bps
-	cli_reset();
+	i2c_master_sendByte(MPU, 0x6B); // send address of PWR_MGMT_1 register
+	uint8_t pwr_mgmt_1 = i2c_read_byte(MPU); // read the value of PWR_MGMT_1 register
+	printf("read_byte: ");
+	printf("%i \n",pwr_mgmt_1);
+	if (pwr_mgmt_1 & (1 << 6)) { // check the value of the SLEEP bit (bit 6)
+	// MPU6050 is in sleep mode
+	printf("Sleep mode");
+	} else {
+	// MPU6050 is not in sleep mode
+	printf("Not sleep mode");
+	}
+	
 	//printf("TESTING VALUES\n");
 	simple6050_read();
 	/* Print out the values */
 	printf("AccelX:");
+	//uint8_t temp = i2c_master_sendByte(MPU, 0x00);
 	ftoa(acc_x, buf, 2);
     printf("%s", buf);
 	printf(",");
@@ -229,6 +269,7 @@ void simple6050_test()
 	printf("AccelZ:");
 	ftoa(acc_z, buf, 2);
     printf("%s\n", buf);
+	/*
 	printf("GyroAngleX:");
 	ftoa(gyroAngleX, buf, 2);
     printf("%s", buf);
@@ -245,6 +286,7 @@ void simple6050_test()
 	//printf(",");
 	//printf("pitch:");
 	//printf("%f \n",pitch);
+	*/
 	_delay_ms(30);
 }
 
