@@ -22,7 +22,7 @@
 * (2) https://howtomechatronics.com/tutorials/arduino/arduino-and-mpu6050-accelerometer-and-gyroscope-tutorial/
 */
 
-#include "i2c_master.c"  // Used for I2C communications
+#include "i2c_master.c" 	 // Used for I2C communications
 #include <stdbool.h>
 #include <math.h>
 #include <time.h>
@@ -46,6 +46,7 @@ time_t timer;											// creates timer
 char buf[10];											// used to print out values
 
 /*
+*	Converts floats to be printed with printf
 *	ChatGPT Generated
 */
 char *ftoa(float f, char *buf, int precision) {
@@ -59,25 +60,6 @@ char *ftoa(float f, char *buf, int precision) {
     *++ptr = '\0';
     return buf;
 }
-
-uint8_t i2c_read_byte(uint8_t address)
-{
-    // start I2C communication and check for errors
-    if (i2c_master_start(address, TW_READ) != I2C_STATUS_SUCCESS)
-    {
-        // handle error
-        return 0xFF; // return a default value to indicate an error
-    }
-
-    // read a single byte of data and send NACK to stop communication
-    uint8_t data = i2c_master_readNack();
-
-    // end I2C communication
-    i2c_master_stop();
-
-    return data;
-}
-
 
 /*
 * Sets initial values of parameters for 6050
@@ -195,20 +177,36 @@ void simple6050_read()
 	i2c_master_receive(MPU, &data_in[0], 1);
 	i2c_master_sendByte(MPU, 0x3C);
 	i2c_master_receive(MPU, &data_in[1], 1);
-	//i2c_master_receive(MPU, &data_in, 2);
-	//i2c_master_receive(MPU, &data_in, 2);
+	i2c_master_sendByte(MPU, 0x3D);
+	i2c_master_receive(MPU, &data_in[2], 1);
+	i2c_master_sendByte(MPU, 0x3E);
+	i2c_master_receive(MPU, &data_in[3], 1);
+	i2c_master_sendByte(MPU, 0x3F);
+	i2c_master_receive(MPU, &data_in[4], 1);
+	i2c_master_sendByte(MPU, 0x40);
+	i2c_master_receive(MPU, &data_in[5], 1);
+
 	// Code blocks modified from (2)
 	// Must divide by sensitivity values
-	acc_x = ((data_in[0] << 8 ) | data_in[1] )/ lsb_sen_acc; // X-axis value
-	acc_y = data_in[1] / lsb_sen_acc; // Y-axis value
-	acc_z = data_in[2] / lsb_sen_acc; // Z-axis value
+	acc_x = ((data_in[0] << 8 ) | data_in[1] ) / lsb_sen_acc; // X-axis value
+	acc_y = ((data_in[2] << 8 ) | data_in[3] ) / lsb_sen_acc; // Y-axis value
+	acc_z = ((data_in[4] << 8 ) | data_in[5] ) / lsb_sen_acc; // Z-axis value
 
-	//i2c_master_receive(MPU, &data_in[4], 2);
-	//i2c_master_receive(MPU, &data_in[5], 2);
-	//i2c_master_receive(MPU, &data_in[6], 2);
-	gyro_x = data_in[4] / lsb_sen_gyro;
-	gyro_y = data_in[5] / lsb_sen_gyro;
-	gyro_z = data_in[6] / lsb_sen_gyro;
+	i2c_master_sendByte(MPU, 0x43);
+	i2c_master_receive(MPU, &data_in[6], 1);
+	i2c_master_sendByte(MPU, 0x44);
+	i2c_master_receive(MPU, &data_in[7], 1);
+	i2c_master_sendByte(MPU, 0x45);
+	i2c_master_receive(MPU, &data_in[8], 1);
+	i2c_master_sendByte(MPU, 0x46);
+	i2c_master_receive(MPU, &data_in[9], 1);
+	i2c_master_sendByte(MPU, 0x47);
+	i2c_master_receive(MPU, &data_in[10], 1);
+	i2c_master_sendByte(MPU, 0x48);
+	i2c_master_receive(MPU, &data_in[11], 1);
+	gyro_x = ((data_in[6] << 8 )  | data_in[7] ) / lsb_sen_gyro;
+	gyro_y = ((data_in[8] << 8 )  | data_in[9] ) / lsb_sen_gyro;
+	gyro_z = ((data_in[10] << 8 ) | data_in[11] ) / lsb_sen_gyro;
 
 	previousTime = currentTime;     	 // Previous time is stored before the actual time read
 	currentTime = timer;           		 // Current time actual time read
@@ -241,24 +239,11 @@ void simple6050_read()
 * monitor. Values can also be viewed in the serial plotter.
 */
 void simple6050_test()
-{
-	i2c_master_sendByte(MPU, 0x6B); // send address of PWR_MGMT_1 register
-	uint8_t pwr_mgmt_1 = i2c_read_byte(MPU); // read the value of PWR_MGMT_1 register
-	printf("read_byte: ");
-	printf("%i \n",pwr_mgmt_1);
-	if (pwr_mgmt_1 & (1 << 6)) { // check the value of the SLEEP bit (bit 6)
-	// MPU6050 is in sleep mode
-	printf("Sleep mode");
-	} else {
-	// MPU6050 is not in sleep mode
-	printf("Not sleep mode");
-	}
-	
+{	
 	//printf("TESTING VALUES\n");
 	simple6050_read();
 	/* Print out the values */
 	printf("AccelX:");
-	//uint8_t temp = i2c_master_sendByte(MPU, 0x00);
 	ftoa(acc_x, buf, 2);
     printf("%s", buf);
 	printf(",");
@@ -269,7 +254,6 @@ void simple6050_test()
 	printf("AccelZ:");
 	ftoa(acc_z, buf, 2);
     printf("%s\n", buf);
-	/*
 	printf("GyroAngleX:");
 	ftoa(gyroAngleX, buf, 2);
     printf("%s", buf);
@@ -286,7 +270,6 @@ void simple6050_test()
 	//printf(",");
 	//printf("pitch:");
 	//printf("%f \n",pitch);
-	*/
 	_delay_ms(30);
 }
 
